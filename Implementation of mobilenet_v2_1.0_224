@@ -1,1 +1,85 @@
+# Installation of TF-slim (run the following codes in your local terminal):
+$ source activate tensorflow
+$ python -c "import tensorflow.contrib.slim as slim; eval = slim.evaluation.evaluate_once"
+$ cd desktop
+$ git clone https://github.com/tensorflow/models/
+$ cd models/research/slim  (already in desktop directory)
+$ python -c "from nets import cifarnet; mynet = cifarnet.cifarnet"
 
+from __future__ import print_function
+from IPython import display 
+checkpoint_name = 'mobilenet_v2_1.0_224' #@param
+url = 'https://storage.googleapis.com/mobilenet_v2/checkpoints/' + checkpoint_name + '.tgz'
+base_name="mobilenet_v2_1.0_224"
+print('Downloading from ', url)
+!wget {url}
+print('Unpacking')
+!tar -xvf {base_name}.tgz
+checkpoint = base_name + '.ckpt'
+
+display.clear_output()
+print('Successfully downloaded checkpoint from ', url,
+      '. It is available as', checkpoint)
+
+!wget https://upload.wikimedia.org/wikipedia/commons/f/fe/Giant_Panda_in_Beijing_Zoo_1.JPG -O panda.jpg
+
+# setup path
+import sys
+sys.path.append('/desktop/models/research/slim')
+
+import tensorflow as tf
+from nets.mobilenet import mobilenet_v2
+
+tf.reset_default_graph()
+
+# For simplicity we just decode jpeg inside tensorflow.
+# But one can provide any input obviously.
+file_input = tf.placeholder(tf.string, ())
+
+image = tf.image.decode_jpeg(tf.read_file(file_input))
+
+images = tf.expand_dims(image, 0)
+images = tf.cast(images, tf.float32) / 128.  - 1
+images.set_shape((None, None, None, 3))
+images = tf.image.resize_images(images, (224, 224))
+
+# Note: arg_scope is optional for inference.
+with tf.contrib.slim.arg_scope(mobilenet_v2.training_scope(is_training=False)):
+  logits, endpoints = mobilenet_v2.mobilenet(images)
+  
+# Restore using exponential moving average since it produces (1.5-2%) higher 
+# accuracy
+ema = tf.train.ExponentialMovingAverage(0.999)
+vars = ema.variables_to_restore()
+
+saver = tf.train.Saver(vars) 
+
+from IPython import display
+import pylab
+from datasets import imagenet
+import PIL
+display.display(display.Image('panda.jpg'))
+
+checkpoint_name = 'mobilenet_v2_1.0_224'
+
+with tf.Session() as sess:
+  saver.restore(sess,  checkpoint)
+  x = endpoints['Predictions'].eval(feed_dict={file_input: 'panda.jpg'})
+label_map = imagenet.create_readable_names_for_imagenet_labels()  
+print("Top 1 prediction: ", x.argmax(),label_map[x.argmax()], x.max())
+
+INFO:tensorflow:Restoring parameters from mobilenet_v2_1.0_224.ckpt
+Top 1 prediction:  389 giant panda, panda, panda bear, coon bear, Ailuropoda melanoleuca 0.84999925
+
+import numpy as np
+img = np.array(PIL.Image.open('panda.jpg').resize((224, 224))).astype(np.float) / 128 - 1
+gd = tf.GraphDef.FromString(open(base_name + '_frozen.pb', 'rb').read())
+inp, predictions = tf.import_graph_def(gd,  return_elements = ['input:0', 'MobilenetV2/Predictions/Reshape_1:0'])
+
+with tf.Session(graph=inp.graph):
+  x = predictions.eval(feed_dict={inp: img.reshape(1, 224,224, 3)})
+
+label_map = imagenet.create_readable_names_for_imagenet_labels()  
+print("Top 1 Prediction: ", x.argmax(),label_map[x.argmax()], x.max())
+
+#Top 1 Prediction:  389 giant panda, panda, panda bear, coon bear, Ailuropoda melanoleuca 0.8914297
